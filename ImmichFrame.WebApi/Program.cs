@@ -146,6 +146,8 @@ builder.Services.AddSwaggerGen(options =>
 builder.Services.AddAuthorization(options => { options.AddPolicy("AllowAnonymous", policy => policy.RequireAssertion(context => true)); });
 
 builder.Services.AddSingleton<AdminAuthService>();
+builder.Services.AddSingleton<CloudflareFrame>();
+builder.Services.AddSingleton(TimeProvider.System);
 
 builder.Services.AddAuthentication("ImmichFrameScheme")
     .AddScheme<AuthenticationSchemeOptions, ImmichFrameAuthenticationHandler>("ImmichFrameScheme", options => { })
@@ -167,6 +169,25 @@ if (app.Environment.IsProduction())
 }
 
 // app.UseHttpsRedirection();
+var cloudflareFrame = app.Services.GetRequiredService<CloudflareFrame>();
+app.Use(async (context, next) =>
+{
+    if (context.Request.Path.StartsWithSegments(CloudflareFrame.Prefix, StringComparison.OrdinalIgnoreCase))
+    {
+        context.Response.Headers.CacheControl = "private, no-store";
+        if (!cloudflareFrame.Enabled)
+        {
+            context.Response.StatusCode = StatusCodes.Status404NotFound;
+            return;
+        }
+        if (!cloudflareFrame.Accepts(context.Request.Headers[CloudflareFrame.KeyHeader].ToString()))
+        {
+            context.Response.StatusCode = StatusCodes.Status401Unauthorized;
+            return;
+        }
+    }
+    await next(context);
+});
 app.UseMiddleware<CustomAuthenticationMiddleware>();
 
 app.UseAuthentication();

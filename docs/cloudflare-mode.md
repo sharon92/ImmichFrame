@@ -1,0 +1,11 @@
+# Cloudflare mode
+
+Cloudflare mode serves one remote Android frame per ImmichFrame instance. The frame fetches photos and checks for commands over HTTPS. The browser continues to use `/controls` for uploads, crops, and playback. The frame reports the photo it rendered on its next check-in.
+
+1. On the dedicated ImmichFrame server, configure the album, admin password, and slideshow authentication secret. Add the container environment variable `CLOUDFLARE_FRAME_KEY` with a separate random device key of 32 to 256 characters. Keep the key in the server configuration and on the frame.
+2. In Cloudflare Zero Trust, create a self-hosted Access application for the hostname with an **Allow** policy for the exact email addresses that can use the controls. Enable **One-time PIN** for email sign-in. Create a second Access application for the same hostname with the path `/api/cloudflare/frame/*`. Give this application a **Service Auth** policy limited to the frame's service token. The more-specific path policy takes precedence. [Application paths](https://developers.cloudflare.com/cloudflare-one/access-controls/policies/app-paths/) · [Service tokens](https://developers.cloudflare.com/cloudflare-one/access-controls/service-credentials/service-tokens/)
+3. Point the Cloudflare Tunnel hostname at the dedicated ImmichFrame instance. Verify both the hostname and the frame API path are protected before adding photos.
+4. On the updated Android app, set **ImmichFrame Server URL** to the HTTPS hostname, with no path. Set **Authorization Secret** to the slideshow secret. Enable **Cloudflare mode**, then enter the service token's **Client ID**, **Client Secret**, and the matching **ImmichFrame device key**. Close Settings.
+5. In a browser, sign in at `/controls` and enter the slideshow secret when prompted. The remote frame appears automatically. Send a command or select a gallery thumbnail and verify the resulting photo under **Now showing**.
+
+The server holds pending commands in memory for up to 20 seconds. An offline frame rejects new commands. Reopen the app or check its settings if the controls page stays on “Waiting for the frame to connect.” To return to LAN controls, remove `CLOUDFLARE_FRAME_KEY` from the server and turn off Cloudflare mode in the Android app.

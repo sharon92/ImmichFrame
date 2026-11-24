@@ -2,6 +2,7 @@ using System.Globalization;
 using System.Text.Json;
 using System.Net;
 using System.Net.Sockets;
+using ImmichFrame.WebApi.Services;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 
@@ -9,7 +10,7 @@ namespace ImmichFrame.WebApi.Controllers;
 
 [ApiController]
 [Route("api/controls")]
-public sealed class FrameControlsController(IHttpClientFactory clients, IConfiguration configuration) : ControllerBase
+public sealed class FrameControlsController(IHttpClientFactory clients, IConfiguration configuration, CloudflareFrame cloud) : ControllerBase
 {
     private static readonly SemaphoreSlim ScanGate = new(1);
 
@@ -52,9 +53,14 @@ public sealed class FrameControlsController(IHttpClientFactory clients, IConfigu
     }
 
     [AllowAnonymous]
+    [HttpGet("mode")]
+    public IActionResult Mode() => Ok(new { cloudflare = cloud.Enabled });
+
+    [AllowAnonymous]
     [HttpPost("scan")]
     public async Task<IActionResult> Scan(CancellationToken ct)
     {
+        if (cloud.Enabled) return BadRequest("This server uses Cloudflare mode.");
         if (GetNetwork() is not { } network)
             return BadRequest("Set FRAME_CONTROL_NETWORK to the frame LAN, for example 192.168.1.0/24.");
         if (!await ScanGate.WaitAsync(0, ct)) return StatusCode(429, "A scan is already running.");
@@ -81,20 +87,33 @@ public sealed class FrameControlsController(IHttpClientFactory clients, IConfigu
     [HttpPost("command")]
     public async Task<IActionResult> Send(FrameCommand request, CancellationToken ct)
     {
-        if (!IPAddress.TryParse(request.Device, out var address) || address.AddressFamily != AddressFamily.InterNetwork
-            || GetNetwork() is not { } network || !network.Contains(address) || address.GetAddressBytes()[3] is 0 or 255)
-            return BadRequest("Select a frame on the configured LAN.");
         var path = request.Command switch
         {
             "status" => "playback-status",
-            "goto" when request.Key?.Split('/') is { Length: 3 } parts && parts.All(p => Guid.TryParseExact(p, "D", out _)) =>
-                "goto?value=" + Uri.EscapeDataString(request.Key),
+            "goto" when CloudflareFrame.IsPhotoKey(request.Key) => "goto?value=" + Uri.EscapeDataString(request.Key!),
             "dim" or "undim" or "next" or "previous" or "pause" or "settings" => request.Command,
             "brightness" when request.Value is -1 or (>= 0 and <= 1) =>
                 "brightness?value=" + request.Value.Value.ToString(CultureInfo.InvariantCulture),
             _ => null
         };
         if (path == null) return BadRequest("Invalid frame command.");
+        if (cloud.Enabled)
+        {
+            if (request.Device != CloudflareFrame.Target) return BadRequest("Select the Cloudflare frame.");
+            if (request.Command == "status")
+                return cloud.Status() is { } status
+                    ? Ok(new { supported = true, status.Frame, status.Current })
+                    : StatusCode(503, "Waiting for the frame to connect.");
+            return cloud.Enqueue(new(request.Command, request.Value, request.Key)) switch
+            {
+                202 => Accepted(),
+                429 => StatusCode(429, "The frame has too many pending commands."),
+                _ => StatusCode(503, "The frame is offline.")
+            };
+        }
+        if (!IPAddress.TryParse(request.Device, out var address) || address.AddressFamily != AddressFamily.InterNetwork
+            || GetNetwork() is not { } network || !network.Contains(address) || address.GetAddressBytes()[3] is 0 or 255)
+            return BadRequest("Select a frame on the configured LAN.");
         using var client = clients.CreateClient("FrameRemote");
         if (!await IsFrame(client, address, ct)) return StatusCode(502, "Frame unavailable. Scan again.");
         try

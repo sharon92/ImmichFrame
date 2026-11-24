@@ -1,5 +1,6 @@
 using ImmichFrame.Core.Interfaces;
 using ImmichFrame.WebApi.Models;
+using ImmichFrame.WebApi.Services;
 using Microsoft.AspNetCore.Mvc;
 
 namespace ImmichFrame.WebApi.Controllers
@@ -18,6 +19,7 @@ namespace ImmichFrame.WebApi.Controllers
         }
 
         [HttpGet(Name = "GetConfig")]
+        [HttpGet(CloudflareFrame.Prefix + "/config")]
         public ClientSettingsDto GetConfig(string clientIdentifier = "")
         {
             var sanitizedClientIdentifier = clientIdentifier.SanitizeString();

@@ -27,6 +27,9 @@
 	let names = $state<Record<string, string>>({});
 	let frameName = $state('');
 	let devices = $state<string[]>([]);
+	const remoteDevice = 'cloudflare';
+	let cloudflare = $state(false);
+	let checkingMode = $state(true);
 	let device = $state('');
 	let busy = $state(false);
 	let message = $state('');
@@ -42,23 +45,32 @@
 			: (ratios[device] ?? '10:16')
 	);
 
+	function validDevice(address: string) {
+		return address === remoteDevice || /^(?:[0-9]{1,3}\.){3}[0-9]{1,3}$/.test(address);
+	}
+
 	onMount(() => {
 		try {
 			device = localStorage.getItem(storageKey) ?? '';
+			if (!validDevice(device) || device === remoteDevice) device = '';
 			const stored = JSON.parse(localStorage.getItem(namesKey) ?? '{}');
 			names = Object.fromEntries(
 				Object.entries(stored ?? {}).filter(
-					([address, name]) =>
-						/^(?:[0-9]{1,3}\.){3}[0-9]{1,3}$/.test(address) && typeof name === 'string'
+					([address, name]) => validDevice(address) && typeof name === 'string'
 				)
 			) as Record<string, string>;
-			devices = [...new Set([...Object.keys(names), ...(device ? [device] : [])])];
+			devices = [
+				...new Set([
+					...Object.keys(names).filter((key) => key !== remoteDevice),
+					...(device ? [device] : [])
+				])
+			];
 			frameName = names[device] ?? '';
 			const savedRatios = JSON.parse(localStorage.getItem(ratiosKey) ?? '{}');
 			ratios = Object.fromEntries(
 				Object.entries(savedRatios ?? {}).filter(
 					([address, value]) =>
-						devices.includes(address) && typeof value === 'string' && validPortrait(value)
+						validDevice(address) && typeof value === 'string' && validPortrait(value)
 				)
 			) as Record<string, string>;
 			portraitRatio = ratios[device] ?? '10:16';
@@ -66,13 +78,20 @@
 			orientations = Object.fromEntries(
 				Object.entries(savedOrientations ?? {}).filter(
 					([address, value]) =>
-						/^(?:[0-9]{1,3}\.){3}[0-9]{1,3}$/.test(address) &&
-						(value === 'portrait' || value === 'landscape')
+						validDevice(address) && (value === 'portrait' || value === 'landscape')
 				)
 			) as Record<string, Orientation>;
 		} catch {
 			/* Storage may be unavailable in private browsing. */
 		}
+		void fetch('/api/controls/mode')
+			.then(async (response) => {
+				if (!response.ok) return;
+				cloudflare = (await response.json()).cloudflare === true;
+				if (cloudflare) selectDevice(remoteDevice);
+			})
+			.catch(() => {})
+			.finally(() => (checkingMode = false));
 	});
 
 	function setOrientation(orientation: Orientation) {
@@ -92,6 +111,7 @@
 		brightnessLabel = 'Unknown';
 		brightness = 0.5;
 		try {
+			if (address === remoteDevice) return;
 			if (address) localStorage.setItem(storageKey, address);
 			else localStorage.removeItem(storageKey);
 		} catch {
@@ -150,7 +170,13 @@
 		message = 'Searching the frame LAN…';
 		try {
 			const found: string[] = await (await request('scan')).json();
-			devices = [...new Set([...Object.keys(names), ...found, ...(device ? [device] : [])])];
+			devices = [
+				...new Set([
+					...Object.keys(names).filter((key) => key !== remoteDevice),
+					...found,
+					...(device ? [device] : [])
+				])
+			];
 			if (!device && found.length === 1) selectDevice(found[0]);
 			message = found.length
 				? ''
@@ -168,7 +194,9 @@
 			await request('command', { device, command, value });
 			if (command === 'brightness')
 				brightnessLabel = value === -1 ? 'System default' : Math.round(brightness * 100) + '%';
-			message = 'Command received by ' + device + '.';
+			message = cloudflare
+				? 'Command queued for the frame.'
+				: 'Command received by ' + device + '.';
 		} catch (error) {
 			if (command === 'brightness') brightnessLabel = 'Unknown';
 			message = String(error);
@@ -194,23 +222,27 @@
 
 	<section class="panel">
 		<h2>Target device</h2>
-		<div class="flex flex-wrap items-center gap-3">
-			<select
-				aria-label="Target device"
-				class="min-h-11 min-w-36 max-w-full flex-1 rounded-lg border px-3"
-				value={device}
-				disabled={busy || !devices.length}
-				onchange={(e) => selectDevice(e.currentTarget.value)}
-			>
-				<option value="">Select a frame</option>
-				{#each devices as address (address)}<option value={address}
-						>{names[address] ? names[address] + ' (' + address + ')' : address}</option
-					>{/each}
-			</select>
-			<button class="control-button" disabled={busy} onclick={scan}
-				><Icon path={mdiWifi} ariaHidden={true} />Scan LAN</button
-			>
-		</div>
+		{#if cloudflare}
+			<p>{names[remoteDevice] || 'Remote frame'}</p>
+		{:else}
+			<div class="flex flex-wrap items-center gap-3">
+				<select
+					aria-label="Target device"
+					class="min-h-11 min-w-36 max-w-full flex-1 rounded-lg border px-3"
+					value={device}
+					disabled={busy || !devices.length}
+					onchange={(e) => selectDevice(e.currentTarget.value)}
+				>
+					<option value="">Select a frame</option>
+					{#each devices as address (address)}<option value={address}
+							>{names[address] ? names[address] + ' (' + address + ')' : address}</option
+						>{/each}
+				</select>
+				<button class="control-button" disabled={busy || checkingMode} onclick={scan}
+					><Icon path={mdiWifi} ariaHidden={true} />Scan LAN</button
+				>
+			</div>
+		{/if}
 		{#if device}
 			<div
 				class="mt-4 flex flex-wrap items-center gap-2"
