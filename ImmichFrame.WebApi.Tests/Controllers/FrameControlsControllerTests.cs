@@ -53,7 +53,8 @@ public class FrameControlsControllerTests
         factory.Setup(f => f.CreateClient("FrameRemote")).Returns(client);
         var config = new ConfigurationBuilder().AddInMemoryCollection(
             new Dictionary<string, string?> { ["FRAME_CONTROL_NETWORK"] = "192.168.1.0/24" }).Build();
-        var controller = new FrameControlsController(factory.Object, config);
+        var controller = new FrameControlsController(factory.Object, config,
+            new ImmichFrame.WebApi.Services.CloudflareFrame(config, TimeProvider.System));
         var result = await controller.Send(new(device, command, value), CancellationToken.None);
         var actual = ((Microsoft.AspNetCore.Mvc.Infrastructure.IStatusCodeActionResult)result).StatusCode;
         Assert.That(actual, Is.EqualTo(status));
@@ -75,7 +76,8 @@ public class FrameControlsControllerTests
         factory.Setup(f => f.CreateClient("FrameRemote")).Returns(client);
         var config = new ConfigurationBuilder().AddInMemoryCollection(
             new Dictionary<string, string?> { ["FRAME_CONTROL_NETWORK"] = "192.168.1.0/24" }).Build();
-        var controller = new FrameControlsController(factory.Object, config);
+        var controller = new FrameControlsController(factory.Object, config,
+            new ImmichFrame.WebApi.Services.CloudflareFrame(config, TimeProvider.System));
 
         var result = (ObjectResult)await controller.Send(new("192.168.1.8", "status", null), CancellationToken.None);
 

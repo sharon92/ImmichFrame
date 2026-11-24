@@ -143,6 +143,7 @@ public sealed class AlbumGalleryController(IServerSettings settings, IHttpClient
     }
 
     [HttpGet]
+    [HttpGet(CloudflareFrame.Prefix + "/gallery")]
     public async Task<IActionResult> Gallery(int offset = 0, int limit = 48, string? from = null, int step = 0, CancellationToken ct = default)
     {
         var albums = new List<object>();
@@ -172,6 +173,7 @@ public sealed class AlbumGalleryController(IServerSettings settings, IHttpClient
     }
 
     [HttpGet("{account}/{album:guid}/{asset:guid}/image")]
+    [HttpGet(CloudflareFrame.Prefix + "/gallery/{account}/{album:guid}/{asset:guid}/image")]
     public async Task<IActionResult> Image(string account, Guid album, Guid asset, bool thumbnail, CancellationToken ct)
     {
         await RequirePhoto(account, album, asset, ct);
@@ -186,6 +188,7 @@ public sealed class AlbumGalleryController(IServerSettings settings, IHttpClient
         Path.Combine(options.ConfigPath, "frame-crops", frame.ToString(), account, asset + ".json");
 
     [HttpGet("{account}/{album:guid}/{asset:guid}/crop/{frame:guid}")]
+    [HttpGet(CloudflareFrame.Prefix + "/gallery/{account}/{album:guid}/{asset:guid}/crop/{frame:guid}")]
     public async Task<IActionResult> Crop(string account, Guid album, Guid asset, Guid frame, CancellationToken ct)
     {
         await RequirePhoto(account, album, asset, ct);

@@ -1,4 +1,6 @@
 using System.Net.Http;
+using System.Net;
+using System.Net.Http.Json;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using ImmichFrame.Core.Interfaces;
@@ -7,6 +9,7 @@ using ImmichFrame.WebApi.Tests.Mocks;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.AspNetCore.TestHost;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Configuration;
 using Moq;
 using NUnit.Framework;
 
@@ -96,6 +99,51 @@ namespace ImmichFrame.WebApi.Tests.Controllers
         public void TearDown()
         {
             _factory.Dispose();
+        }
+
+        [Test]
+        public async Task CloudflareFrameUsesItsOwnCredentialAndReceivesCommandsInOrder()
+        {
+            const string deviceKey = "test-frame-key-with-at-least-32-characters";
+            const string path = "/api/cloudflare/frame";
+            using var factory = _factory.WithWebHostBuilder(builder => builder.ConfigureAppConfiguration(
+                (_, config) => config.AddInMemoryCollection(new Dictionary<string, string?>
+                {
+                    ["CLOUDFLARE_FRAME_KEY"] = deviceKey
+                })));
+            using var browser = factory.CreateClient();
+            browser.DefaultRequestHeaders.Add("Authorization", "Bearer secret-auth-token");
+            using var frame = factory.CreateClient();
+            frame.DefaultRequestHeaders.Add("Authorization", "Bearer secret-auth-token");
+            frame.DefaultRequestHeaders.Add("X-ImmichFrame-Device-Key", deviceKey);
+            var id = Guid.NewGuid();
+            var status = new { frame = id, current = (string?)null };
+            const string commands = "/api/controls/command";
+
+            Assert.That((await browser.PostAsJsonAsync(path + "/check-in", status)).StatusCode, Is.EqualTo(HttpStatusCode.Unauthorized));
+            Assert.That((await browser.PostAsJsonAsync(commands, new { device = "cloudflare", command = "next" })).StatusCode,
+                Is.EqualTo(HttpStatusCode.ServiceUnavailable));
+            Assert.That((await frame.GetAsync(path + "/config")).StatusCode, Is.EqualTo(HttpStatusCode.OK));
+            Assert.That((await frame.GetAsync(path + "/gallery?limit=1")).StatusCode, Is.EqualTo(HttpStatusCode.OK));
+            Assert.That((await frame.PostAsJsonAsync(path + "/check-in", status)).StatusCode, Is.EqualTo(HttpStatusCode.OK));
+
+            foreach (var command in new[] { "next", "previous" })
+                Assert.That((await browser.PostAsJsonAsync(commands, new { device = "cloudflare", command })).StatusCode,
+                    Is.EqualTo(HttpStatusCode.Accepted));
+
+            foreach (var command in new[] { "next", "previous" })
+            {
+                var response = await frame.PostAsJsonAsync(path + "/check-in", status);
+                var body = await response.Content.ReadFromJsonAsync<JsonElement>();
+                Assert.That(body.GetProperty("command").GetProperty("command").GetString(), Is.EqualTo(command));
+            }
+
+            var empty = await frame.PostAsJsonAsync(path + "/check-in", status);
+            var emptyBody = await empty.Content.ReadFromJsonAsync<JsonElement>();
+            Assert.That(emptyBody.GetProperty("command").ValueKind, Is.EqualTo(JsonValueKind.Null));
+
+            var playback = await browser.PostAsJsonAsync(commands, new { device = "cloudflare", command = "status" });
+            Assert.That((await playback.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("frame").GetGuid(), Is.EqualTo(id));
         }
 
         [Test]
